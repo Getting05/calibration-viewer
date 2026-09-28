@@ -121,9 +121,12 @@ at startup. The same visibility options are available interactively in the
 viewer. If a mesh cannot be loaded, the Diagnostics panel reports why; skeleton
 and keypoint calibration remains available.
 
-The SMPL surface is the pelvis-centered source mesh. Morphology sliders continue
-to operate on the calibration skeleton/keypoints; the surface is intentionally
-left unwarped so it can expose source-axis, pose, and model-loading problems.
+SMPL and SOMA surfaces follow the calibrated skeleton on every slider change
+and automatic fit. Cached geometric skinning blends nearby bone transforms.
+Bone mode stretches bone lengths while retaining transverse thickness; legacy
+mode also applies the upper/lower XYZ scales to the surface. This is an
+approximate visualization deformation, not a refit of the parametric body model.
+The source mesh is preserved, so repeated adjustments do not accumulate drift.
 
 The bundled Astro P2 preset bends both elbow joints by +90 degrees because that
 URDF's elbow zero pose points each forearm forward. This makes the complete arm
@@ -415,8 +418,8 @@ SOMA77 presets use forward/left/up = `[z, x, y]`; ProtoMotions SOMA23 presets
 use `[-y, x, z]`. These are dataset conventions, not inferred from the array
 shape. Choose the matching preset or override `--human-axes` and
 `--human-units {m,cm,mm}`. YAML exports retain source layout, units and axes.
-The original human mesh stays in its source shape; calibrated joints show the
-morphology transformation.
+The human mesh follows the calibrated joints using the geometric skinning
+described above.
 
 ```bash
 soma-calibration-viewer --soma /path/to/soma23_humanoid.xml \

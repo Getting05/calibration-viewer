@@ -16,6 +16,7 @@ from .calibration import (
 )
 from .config import save_config
 from .human import HumanSkeleton
+from .mesh import MeshDeformer
 from .robot import RobotModel
 
 
@@ -85,6 +86,8 @@ class CalibrationViewer:
                 np.array([self.joints[n] for n in robot.actuated_joint_names])
             )
         self.server.scene.add_grid("/ground", width=4, height=4, cell_size=0.1, section_size=1.0)
+        self.mesh_deformer = (None if self.raw_human_vertices is None else
+                              MeshDeformer(self.raw_human_vertices, self.raw_human, self.human.edges))
         self._build_gui(show_robot_mesh, show_smpl_mesh)
         self._redraw()
 
@@ -113,7 +116,7 @@ class CalibrationViewer:
                 and (self.robot.visuals_loaded or self.robot.collisions_loaded),
             )
             self.show_smpl_mesh = self.server.gui.add_checkbox(
-                f"Source {self.human.label} mesh (unwarped)", initial_value=show_smpl_mesh and self.human.vertices is not None
+                f"Calibrated {self.human.label} mesh", initial_value=show_smpl_mesh and self.human.vertices is not None
             )
             self.show_human_skeleton = self.server.gui.add_checkbox(
                 f"{self.human.label} skeleton", initial_value=True
@@ -256,7 +259,8 @@ class CalibrationViewer:
         rmse = float(np.sqrt(np.mean(np.square(error)))) if error else float("nan")
         human_array = np.asarray([human[n] for n in human])
         robot_array = np.asarray([robot[n] for n in robot])
-        vertices = self.raw_human_vertices
+        vertices = (None if self.mesh_deformer is None else
+                    self.mesh_deformer.deform(human, self.params))
         if vertices is not None and self.human.faces is not None:
             self.smpl_mesh_handle = self.server.scene.add_mesh_simple(
                 "/human/mesh",
