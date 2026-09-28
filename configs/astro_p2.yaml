@@ -9,7 +9,6 @@ robot:
   base_link: pelvis
   keypoint_links:
     pelvis: pelvis
-    spine3: torso_link
     left_hip: left_hip_pitch_link
     right_hip: right_hip_pitch_link
     left_knee: left_knee_link
