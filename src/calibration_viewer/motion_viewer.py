@@ -16,6 +16,7 @@ def preview_motion(robot, data: dict, *, host="127.0.0.1", port=8080) -> None:
     server = viser.ViserServer(host=host, port=port, label="PyRoki motion preview")
     names = list(data["keypoint_names"])
     joint_names = list(data["joint_names"])
+    skeleton_edges = data.get("keypoint_edges", SMPL_EDGES)
     count = len(data["joint_positions"])
     frame = server.gui.add_slider("Frame", min=0, max=max(count-1, 1), step=1, initial_value=0)
     playing = server.gui.add_checkbox("Playing", initial_value=count > 1)
@@ -56,7 +57,7 @@ def preview_motion(robot, data: dict, *, host="127.0.0.1", port=8080) -> None:
             points = data[f"{group}_keypoints"][t]
             server.scene.add_point_cloud(f"/{group}/points", points, color, point_size=.025)
             edges = np.asarray([[points[names.index(a)], points[names.index(b)]]
-                                for a, b in SMPL_EDGES if a in names and b in names]).reshape(-1, 2, 3)
+                                for a, b in skeleton_edges if a in names and b in names]).reshape(-1, 2, 3)
             server.scene.add_line_segments(f"/{group}/bones", edges, color, thickness=.008)
         status.content = f"Frame {t}/{count-1} · {t / float(data['fps']):.2f} s · positional RMSE {data['frame_rmse_m'][t]*100:.2f} cm"
     frame.on_update(redraw)

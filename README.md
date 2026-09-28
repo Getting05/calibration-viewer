@@ -374,6 +374,97 @@ calibration-viewer --smpl /tmp/calibration-demo/human.npz \
   --retarget --motion-output /tmp/calibration-demo/result.npz --preview-motion
 ```
 
+## SOMA-to-robot calibration
+
+Version 0.3 adds a separate `soma-calibration-viewer` entry point. The existing
+`calibration-viewer --soma ...` command has the same functionality; SMPL inputs
+remain supported. SOMA uses its native 23-body topology, including both neck
+joints. SOMA77 inputs select those 23 bodies; fingers, face and terminal leaf
+joints are not calibrated. No synthetic SMPL joints are inserted.
+
+Six presets cover SOMA23 and SOMA77 with Astro P2, Unitree G1 and H1-2. They
+provide robot correspondence and axis conventions; fit them to your particular
+source body and robot. Correspondences use semantic names:
+
+| SOMA native joint | Calibration name |
+|---|---|
+| `Hips`, `Chest` | `pelvis`, `spine3` |
+| `Neck1`, `Neck2` | `neck`, `neck2` |
+| `Left/RightShoulder` | `left/right_collar` |
+| `Left/RightArm`, `ForeArm`, `Hand` | `left/right_shoulder`, `elbow`, `wrist` |
+| `Left/RightLeg`, `Shin`, `Foot`, `ToeBase` | `left/right_hip`, `knee`, `ankle`, `foot` |
+
+### Input formats and coordinates
+
+- SOMA77 NPZ/NPY: world joint positions `[T,77,3]` or `[77,3]`, using the
+  SOMASkeleton77 order. NPZ position keys can be `posed_joints`, `joints`,
+  `positions` or `rigid_body_pos`.
+- SOMA23 NPZ/NPY: the same shapes with 23 joints, in the native MJCF traversal
+  order (right arm and leg before left). With `joint_names` or `body_names`,
+  arrays are mapped by native names regardless of order. Unknown unnamed
+  layouts are rejected.
+- SOMA23 rest MJCF: a self-contained, local-coordinate XML with the native
+  23-body parent tree, explicit `pos`/`quat`, and primitive sphere/capsule/box/
+  cylinder geometry. This loads neutral joints and a primitive source mesh;
+  it does not load a parametric SOMA surface model or run MuJoCo.
+- Trusted pickle dictionaries and Torch `.motion`/`.pt` are also accepted.
+  Torch files need the optional `soma-motion` extra and any Python modules
+  referenced by their saved metadata. Rotation-only files are not skeletons.
+
+SOMA77 presets use forward/left/up = `[z, x, y]`; ProtoMotions SOMA23 presets
+use `[-y, x, z]`. These are dataset conventions, not inferred from the array
+shape. Choose the matching preset or override `--human-axes` and
+`--human-units {m,cm,mm}`. YAML exports retain source layout, units and axes.
+The original human mesh stays in its source shape; calibrated joints show the
+morphology transformation.
+
+```bash
+soma-calibration-viewer --soma /path/to/soma23_humanoid.xml \
+  --urdf /path/to/astro_p2_retarget.urdf \
+  --config configs/soma23_to_astro_p2.yaml --mode bone \
+  --output soma_p2_calibration.yaml --port 8089
+```
+
+This viewer supports the same independent left/right bone scales, shoulder/
+elbow/hip 3D offsets, automatic fitting and YAML import/export as SMPL. Use
+`--fit-only` for a noninteractive initial fit.
+
+### SOMA motion and PyRoki
+
+Root trajectory calibration, synchronized multi-frame fitting and PyRoki IK
+use the same commands described above. Substitute `--soma` and a SOMA preset:
+
+```bash
+calibration-viewer --soma soma77_motion.npz --fps 30 \
+  --urdf robot.urdf --config configs/soma77_to_astro_p2.yaml \
+  --mode bone --retarget --motion-output soma_robot_motion.npz --preview-motion
+```
+
+Use `--fit-motion --robot-motion reference.npz` with a synchronized robot
+reference to fit across frames. A static robot pose is not a motion reference.
+The default root heading is yaw inferred from the hip direction after axis
+conversion. SOMA `global_rot_mats` and `rigid_body_rot` describe joint frames
+and are intentionally not treated as canonical body heading. A supplied
+`root_quat_xyzw` must instead be a canonical body rotation expressed in source
+axes; it is conjugated into viewer axes. Hip-derived heading does not preserve
+root roll/pitch. Output includes `keypoint_edges` and `human_skeleton` so
+playback retains the SOMA tree.
+
+For a ProtoMotions `.motion` with custom metadata, export portable numeric NPZ
+in the original environment, then load it with a SOMA23 preset:
+
+```bash
+# Run with Torch and ProtoMotions importable; viewer installation is not needed.
+python examples/export_soma_motion.py --input input.motion --output portable_soma23.npz
+calibration-viewer --soma portable_soma23.npz --urdf robot.urdf \
+  --config configs/soma23_to_astro_p2.yaml --retarget \
+  --motion-output soma_robot_motion.npz
+```
+
+The exporter preserves world positions and fps. It does not relabel joint-frame
+rotations as body heading. The kinematic limitations of the existing PyRoki
+solver also apply to SOMA.
+
 ## Test
 
 ```bash

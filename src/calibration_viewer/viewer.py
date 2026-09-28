@@ -24,7 +24,7 @@ def _segments(points: dict[str, np.ndarray], edges: tuple[tuple[str, str], ...])
     return np.asarray(segments, dtype=float).reshape(-1, 2, 3)
 
 
-def _metrics_markdown(human: dict[str, np.ndarray], robot: dict[str, np.ndarray], rmse: float) -> str:
+def _metrics_markdown(human: dict[str, np.ndarray], robot: dict[str, np.ndarray], rmse: float, label: str = "SMPL") -> str:
     hm, rm = geometry_metrics(human), geometry_metrics(robot)
     labels = {
         "shoulder_width": "Shoulder width", "elbow_span": "Elbow span",
@@ -32,7 +32,7 @@ def _metrics_markdown(human: dict[str, np.ndarray], robot: dict[str, np.ndarray]
         "upper_arm": "Upper arm", "forearm": "Forearm",
         "thigh": "Thigh", "shank": "Shank",
     }
-    rows = ["| measurement | SMPL target | robot |", "|---|---:|---:|"]
+    rows = [f"| measurement | {label} target | robot |", "|---|---:|---:|"]
     for key, label in labels.items():
         a, b = hm[key], rm[key]
         rows.append(f"| {label} | {a:.3f} m | {b:.3f} m |" if a is not None and b is not None else f"| {label} | — | — |")
@@ -103,8 +103,8 @@ class CalibrationViewer:
 
     def _build_gui(self, show_robot_mesh: bool, show_smpl_mesh: bool) -> None:
         self.server.gui.add_markdown(
-            "# SMPL → URDF calibration\n"
-            "Blue: SMPL · Red: robot link origins · Yellow: correspondence residuals"
+            f"# {self.human.label} → URDF calibration\n"
+            f"Blue: {self.human.label} · Red: robot link origins · Yellow: correspondence residuals"
         )
         with self.server.gui.add_folder("Visibility", expand_by_default=True):
             self.show_robot_mesh = self.server.gui.add_checkbox(
@@ -113,10 +113,10 @@ class CalibrationViewer:
                 and (self.robot.visuals_loaded or self.robot.collisions_loaded),
             )
             self.show_smpl_mesh = self.server.gui.add_checkbox(
-                "Source SMPL mesh (unwarped)", initial_value=show_smpl_mesh and self.human.vertices is not None
+                f"Source {self.human.label} mesh (unwarped)", initial_value=show_smpl_mesh and self.human.vertices is not None
             )
             self.show_human_skeleton = self.server.gui.add_checkbox(
-                "SMPL skeleton", initial_value=True
+                f"{self.human.label} skeleton", initial_value=True
             )
             self.show_robot_keypoints = self.server.gui.add_checkbox(
                 "Robot keypoints", initial_value=True
@@ -162,9 +162,9 @@ class CalibrationViewer:
                     f"⚠️ URDF geometry unavailable: {self.robot.visual_error}"
                 )
             smpl_mesh_status = (
-                "✅ SMPL body mesh loaded"
+                f"✅ {self.human.label} body mesh loaded"
                 if self.human.vertices is not None
-                else "⚠️ SMPL body mesh unavailable: the pkl/model did not provide vertices and faces"
+                else f"{self.human.label} skeleton only: source has no body surface vertices/faces"
             )
             self.mesh_status_gui = self.server.gui.add_markdown(
                 f"{robot_mesh_status}\n\n{smpl_mesh_status}"
@@ -229,7 +229,7 @@ class CalibrationViewer:
     def _auto_fit(self) -> None:
         names = list(self.robot.keypoint_links)
         try:
-            fitted, info = fit_calibration(self.raw_human, self.robot.keypoints(), names, initial=self.params)
+            fitted, info = fit_calibration(self.raw_human, self.robot.keypoints(), names, initial=self.params, edges=self.human.edges)
         except ValueError as exc:
             self.status_gui.content = f"⚠️ Fit failed: {exc}"
             return
@@ -246,7 +246,7 @@ class CalibrationViewer:
 
     def _redraw(self) -> None:
         try:
-            human = calibrate_human_points(self.raw_human, self.params)
+            human = calibrate_human_points(self.raw_human, self.params, edges=self.human.edges)
         except ValueError as exc:
             self.status_gui.content = f"⚠️ Invalid calibration: {exc}"
             return
@@ -296,7 +296,7 @@ class CalibrationViewer:
             thickness=0.003,
             visible=bool(self.show_residuals.value),
         )
-        self.metrics_gui.content = _metrics_markdown(human, robot, rmse)
+        self.metrics_gui.content = _metrics_markdown(human, robot, rmse, self.human.label)
 
     def _export(self) -> None:
         robot_config = dict(self.config.get("robot", {}))

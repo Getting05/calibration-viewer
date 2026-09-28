@@ -102,18 +102,19 @@ class CalibrationParams:
 
 
 UPPER = {
-    "spine1", "spine2", "spine3", "neck", "head", "left_collar",
+    "spine1", "spine2", "spine3", "neck", "neck2", "head", "left_collar",
     "right_collar", "left_shoulder", "right_shoulder", "left_elbow",
     "right_elbow", "left_wrist", "right_wrist", "left_hand", "right_hand",
 }
 
 
 def calibrate_human_points(
-    points: Mapping[str, np.ndarray], params: CalibrationParams
+    points: Mapping[str, np.ndarray], params: CalibrationParams,
+    *, edges: Sequence[tuple[str, str]] | None = None,
 ) -> dict[str, np.ndarray]:
     params.validate()
     if params.mode == "bone":
-        return _calibrate_bones(points, params)
+        return _calibrate_bones(points, params, edges)
     root = np.asarray(points["pelvis"])
     output: dict[str, np.ndarray] = {}
     for name, point in points.items():
@@ -128,20 +129,20 @@ def calibrate_human_points(
     return output
 
 
-def _calibrate_bones(points: Mapping[str, np.ndarray], params: CalibrationParams) -> dict[str, np.ndarray]:
+def _calibrate_bones(points: Mapping[str, np.ndarray], params: CalibrationParams, edges=None) -> dict[str, np.ndarray]:
     from .human import SMPL_EDGES
-    parents = {child: parent for parent, child in SMPL_EDGES}
+    parents = {child: parent for parent, child in (SMPL_EDGES if edges is None else edges)}
     output = {"pelvis": np.asarray(points["pelvis"], dtype=float).copy()}
 
     def visit(name: str) -> np.ndarray:
         if name in output:
             return output[name]
         if name not in parents or parents[name] not in points:
-            raise ValueError(f"Bone mode requires SMPL parent for {name}: {parents.get(name)}")
+            raise ValueError(f"Bone mode requires skeleton parent for {name}: {parents.get(name)}")
         parent = parents[name]
         side, _, joint = name.partition("_")
         group = {"elbow": "upper_arm", "wrist": "forearm", "knee": "thigh", "ankle": "shank"}.get(joint)
-        if name in ("spine1", "spine2", "spine3", "neck"):
+        if name in ("spine1", "spine2", "spine3", "neck", "neck2"):
             group = "torso"
         scale = params.bone_scales.get(group, 1.)
         if params.asymmetric and group and group != "torso":
@@ -166,11 +167,12 @@ def fit_calibration(
     initial: CalibrationParams | None = None,
     scale_regularization: float = 0.08,
     offset_regularization: float = 0.02,
+    edges: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[CalibrationParams, dict]:
     """Fit one paired pose; see fit_calibration_frames for synchronized motion."""
     return fit_calibration_frames([human], [robot], names, initial=initial,
                                   scale_regularization=scale_regularization,
-                                  offset_regularization=offset_regularization)
+                                  offset_regularization=offset_regularization, edges=edges)
 
 
 def fit_calibration_frames(
@@ -181,6 +183,7 @@ def fit_calibration_frames(
     initial: CalibrationParams | None = None,
     scale_regularization: float = 0.08,
     offset_regularization: float = 0.02,
+    edges: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[CalibrationParams, dict]:
     """Fit the active mode; inactive parameters are preserved, never optimized."""
     if len(human) == 0 or len(human) != len(robot):
@@ -205,7 +208,7 @@ def fit_calibration_frames(
         params = unpack(x)
         data = []
         for h, r in zip(human, robot, strict=True):
-            pred = calibrate_human_points(h, params)
+            pred = calibrate_human_points(h, params, edges=edges)
             data.extend(pred[n] - h["pelvis"] - (np.asarray(r[n]) - r["pelvis"]) for n in common)
         result = np.concatenate(data)
         if regularize:

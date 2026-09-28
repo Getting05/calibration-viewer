@@ -40,6 +40,7 @@ class HumanSkeleton:
     edges: tuple[tuple[str, str], ...] = SMPL_EDGES
     vertices: np.ndarray | None = None
     faces: np.ndarray | None = None
+    label: str = "SMPL"
 
     def __post_init__(self) -> None:
         points = np.asarray(self.points, dtype=np.float64)
@@ -76,6 +77,7 @@ class HumanSkeleton:
             edges=self.edges,
             vertices=vertices,
             faces=self.faces,
+            label=self.label,
         )
 
 

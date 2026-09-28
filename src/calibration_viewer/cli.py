@@ -9,8 +9,14 @@ from .robot import RobotModel
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Interactive SMPL-to-URDF morphology calibration")
-    parser.add_argument("--smpl", required=True, type=Path, help="SMPL pkl: joints, model, or pose parameters")
+    parser = argparse.ArgumentParser(description="Interactive SMPL/SOMA-to-URDF morphology calibration")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--smpl", type=Path, help="SMPL pkl (backward-compatible alias)")
+    source.add_argument("--soma", type=Path, help="SOMA NPZ/NPY/pickle, .motion, or SOMA23 rest XML")
+    source.add_argument("--human", type=Path, help="Human input; adapter selected by human.format in config")
+    parser.add_argument("--soma-layout", choices=("auto", "soma23", "soma77"))
+    parser.add_argument("--human-axes", nargs=3, metavar=("FORWARD", "LEFT", "UP"))
+    parser.add_argument("--human-units", choices=("m", "cm", "mm"), help="SOMA input units")
     parser.add_argument("--urdf", required=True, type=Path, help="Robot URDF")
     parser.add_argument("--config", required=True, type=Path, help="Robot mapping YAML")
     parser.add_argument(
@@ -25,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--hide-urdf-mesh", action="store_true", help="Start with the URDF mesh hidden")
-    parser.add_argument("--hide-smpl-mesh", action="store_true", help="Start with the SMPL mesh hidden")
+    parser.add_argument("--hide-smpl-mesh", "--hide-human-mesh", action="store_true", help="Start with the human mesh hidden")
     parser.add_argument("--mode", choices=("legacy", "bone"), help="Override calibration mode")
     parser.add_argument("--asymmetric", action="store_true", help="Fit independent left/right bone lengths")
     parser.add_argument("--fit-only", action="store_true", help="Fit once and write YAML without starting Viser")
@@ -48,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main(*, default_format: str | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args()
     if args.fit_only and (args.fit_motion or args.retarget):
@@ -67,8 +73,22 @@ def main() -> None:
     if args.asymmetric:
         params.asymmetric = True
     cfg["calibration"] = params.serializable()
-    human_cfg = cfg.get("human", {})
-    axes = human_cfg.get("axes", ["z", "x", "y"])
+    human_cfg = dict(cfg.get("human", {}))
+    args.source_path = args.soma or args.smpl or args.human
+    source_format = "soma" if args.soma else "smpl_pkl" if args.smpl else default_format or human_cfg.get("format", "smpl_pkl")
+    if source_format not in ("smpl", "smpl_pkl", "soma"):
+        parser.error("human.format must be smpl_pkl or soma")
+    human_cfg["format"] = source_format
+    if source_format == "soma":
+        human_cfg["layout"] = args.soma_layout or human_cfg.get("layout", "auto")
+        human_cfg["units"] = args.human_units or human_cfg.get("units", "m")
+        human_cfg["skeleton"] = "soma23"
+    elif args.soma_layout or args.human_units:
+        parser.error("--soma-layout/--human-units require SOMA input")
+    default_axes = ["-y", "x", "z"] if source_format == "soma" and args.source_path.suffix.lower() in (".xml", ".motion", ".pt") else ["z", "x", "y"]
+    axes = args.human_axes or human_cfg.get("axes", default_axes)
+    human_cfg["axes"] = axes
+    cfg["human"] = human_cfg
     robot_cfg = cfg["robot"]
     mesh_dir = args.mesh_dir or robot_cfg.get("mesh_dir")
     if mesh_dir is not None:
@@ -93,10 +113,14 @@ def main() -> None:
     if args.fit_motion or args.retarget:
         _run_motion(args, cfg, robot, params, root)
         return
-    human = load_smpl_pkl(args.smpl, frame=args.frame, model_path=args.smpl_model, gender=args.gender).transformed(axes)
+    if source_format == "soma":
+        from .soma import load_soma
+        human = load_soma(args.source_path, frame=args.frame, layout=human_cfg["layout"], units=human_cfg["units"]).transformed(axes)
+    else:
+        human = load_smpl_pkl(args.source_path, frame=args.frame, model_path=args.smpl_model, gender=args.gender).transformed(axes)
     if args.fit_only:
         from .calibration import fit_calibration
-        params, info = fit_calibration(human.by_name, robot.keypoints(), list(robot_cfg["keypoint_links"]), initial=params)
+        params, info = fit_calibration(human.by_name, robot.keypoints(), list(robot_cfg["keypoint_links"]), initial=params, edges=human.edges)
         save_config(args.output, {"format_version": 2, "human": human_cfg, "robot": robot_cfg,
                                   "calibration": params.serializable(), "root_trajectory": root.serializable(), "diagnostics": info})
         print(f"Saved {args.output} (RMSE {info['rmse_m'] * 100:.2f} cm, rank {info['rank']}/{info['parameter_count']})")
@@ -117,15 +141,22 @@ def main() -> None:
 def _run_motion(args, cfg, robot, params, root):
     from .calibration import fit_calibration_frames
     from .motion import load_human_motion, reference_robot_frames, fit_root_trajectory
-    motion = load_human_motion(args.smpl, axes=cfg.get("human", {}).get("axes", ["z", "x", "y"]),
-                               fps=args.fps, model_path=args.smpl_model, gender=args.gender,
-                               start=args.start, stop=args.stop, stride=args.stride)
+    human_cfg = cfg.get("human", {})
+    if human_cfg.get("format") == "soma":
+        from .soma import load_soma_motion
+        motion = load_soma_motion(args.source_path, axes=human_cfg["axes"], fps=args.fps,
+                                  layout=human_cfg.get("layout", "auto"), units=human_cfg.get("units", "m"),
+                                  start=args.start, stop=args.stop, stride=args.stride)
+    else:
+        motion = load_human_motion(args.source_path, axes=human_cfg["axes"],
+                                   fps=args.fps, model_path=args.smpl_model, gender=args.gender,
+                                   start=args.start, stop=args.stop, stride=args.stride)
     diagnostics = {}
     if args.fit_motion:
         reference, roots = reference_robot_frames(args.robot_motion, robot, motion,
                                                    source_fps=motion.fps * args.stride)
         params, diagnostics["morphology"] = fit_calibration_frames(
-            motion.frames(), reference, list(robot.keypoint_links), initial=params)
+            motion.frames(), reference, list(robot.keypoint_links), initial=params, edges=motion.edges)
         if roots is not None:
             root, diagnostics["root_trajectory"] = fit_root_trajectory(motion.roots, roots, root)
         else:
@@ -154,6 +185,10 @@ def _run_motion(args, cfg, robot, params, root):
         if args.preview_motion:
             from .motion_viewer import preview_motion
             preview_motion(robot, output, host=args.host, port=args.port)
+
+
+def soma_main() -> None:
+    main(default_format="soma")
 
 
 if __name__ == "__main__":

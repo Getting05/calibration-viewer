@@ -10,7 +10,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 from .calibration import CalibrationParams, calibrate_human_points
-from .human import (HumanSkeleton, _array, _axis_vector, _names_from_data,
+from .human import (SMPL_EDGES, HumanSkeleton, _array, _axis_vector, _names_from_data,
                     _read_pickle, _joints_from_smplx)
 
 
@@ -67,6 +67,8 @@ class HumanMotion:
     fps: float
     root_rotations: np.ndarray | None = None  # [T,3,3], body -> world.
     source_frames: np.ndarray | None = None
+    edges: tuple[tuple[str, str], ...] = SMPL_EDGES
+    label: str = "SMPL"
 
     def __post_init__(self):
         self.points = np.asarray(self.points, dtype=float)
@@ -108,7 +110,7 @@ class HumanMotion:
 
     def calibrated(self, params: CalibrationParams, root: RootTrajectoryParams) -> tuple[np.ndarray, np.ndarray]:
         local = np.asarray([[result[n] for n in self.names]
-                            for frame in self.frames() for result in [calibrate_human_points(frame, params)]])
+                            for frame in self.frames() for result in [calibrate_human_points(frame, params, edges=self.edges)]])
         roots = root.apply(self.roots)
         world = local @ self.root_rotations.transpose(0, 2, 1) + roots[:, None]
         return local, world
